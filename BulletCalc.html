@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <title>グラブル バレット在庫計算機</title>
+    <style>
+        :root {
+            --primary: #34495e;
+            --accent: #27ae60;
+            --error: #e74c3c;
+            --bg: #f4f7f6;
+        }
+
+        body {
+            font-family: "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            padding: 20px;
+            max-width: 1000px;
+            margin: auto;
+            color: var(--primary);
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        h2 {
+            font-size: 1.1rem;
+            margin-top: 0;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+
+        /* フィルタ */
+        .filter-area {
+            margin-bottom: 15px;
+        }
+
+        select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+            cursor: pointer;
+        }
+
+        /* 入力リスト */
+        .bullet-list {
+            height: 600px;
+            overflow-y: auto;
+            border: 1px solid #f0f0f0;
+            border-radius: 6px;
+        }
+
+        .list-header {
+            display: grid;
+            grid-template-columns: 1fr 80px 80px;
+            gap: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            font-size: 0.75rem;
+            font-weight: bold;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            border-bottom: 1px solid #eee;
+        }
+
+        .bullet-item {
+            display: grid;
+            grid-template-columns: 1fr 80px 80px;
+            gap: 10px;
+            align-items: center;
+            padding: 12px 10px;
+            border-bottom: 1px solid #f9f9f9;
+        }
+
+        .bullet-item:hover {
+            background: #fcfdfe;
+        }
+
+        .bullet-name {
+            font-size: 0.85rem;
+            font-weight: bold;
+            display: block;
+        }
+
+        .bullet-type {
+            font-size: 0.7rem;
+            color: #95a5a6;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+
+        input[type="number"]:focus {
+            border-color: var(--accent);
+            outline: none;
+            background: #fafffa;
+        }
+
+        /* 結果エリア */
+        .result-sticky {
+            position: sticky;
+            top: 20px;
+            height: fit-content;
+        }
+
+        .mat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .mat-name {
+            font-size: 0.85rem;
+        }
+
+        .mat-needed {
+            font-weight: bold;
+            color: var(--error);
+            font-size: 0.95rem;
+        }
+
+        .no-need {
+            color: #bdc3c7;
+            font-size: 0.85rem;
+            text-align: center;
+            margin-top: 40px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <!-- 左側：バレット一覧と入力 -->
+        <div class="card">
+            <h2>バレット設定</h2>
+            <div class="filter-area">
+                <select id="type-filter" onchange="renderList()">
+                    <option value="all">すべてのタイプを表示</option>
+                    <option value="パラベラム">パラベラム</option>
+                    <option value="ライフル">ライフル</option>
+                    <option value="カードリッジ">カードリッジ</option>
+                    <option value="エーテリアル">エーテリアル</option>
+                </select>
+            </div>
+            <div class="list-header">
+                <span>バレット名称</span>
+                <span>目標数</span>
+                <span>所持数</span>
+            </div>
+            <div id="bullet-list" class="bullet-list">
+                <!-- JSで動的に生成 -->
+            </div>
+        </div>
+
+        <!-- 右側：計算結果 -->
+        <div class="card result-sticky">
+            <h2>不足している素材</h2>
+            <div id="total-shortage">
+                <p class="no-need">目標数を入力してください</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * レシピデータ定義
+         * recipe内のキーがこのデータ内にあれば「下位バレット」として再帰計算し、
+         * なければ「生素材」として集計します。
+         */
+        const bulletMaster = {
+            //パラベラム
+            'iron_1': { name: 'アイアンバレット1', type: 'パラベラム', recipe: { '鉄鉱石': 2, '赤熱鉱': 2 } },
+            'iron_2': { name: 'アイアンバレット2', type: 'パラベラム', recipe: { '鉄鉱石': 5, '赤熱鉱': 5, 'iron_1': 1 } },
+            'iron_3': { name: 'アイアンバレット3', type: 'パラベラム', recipe: { '鉄鉱石': 12, '赤熱鉱': 8, 'iron_2': 2, '原初の砂': 5 } },
+            'iron_4': { name: 'アイアンバレット4', type: 'パラベラム', recipe: { '鉄鉱石': 25, '赤熱鉱': 20, 'iron_3': 5, '栄華の炎': 20 } },
+            'iron_5': { name: 'アイアンバレット5', type: 'パラベラム', recipe: { '鉄鉱石': 40, '赤熱鉱': 30, 'iron_3': 2, 'iron_4': 3 } },
+            'light_1': { name: 'ライトバレット1', type: 'パラベラム', recipe: { '鉄鉱石': 2, '栄華の炎': 2, 'リキッド・スチール': 3 } },
+            'light_2': { name: 'ライトバレット2', type: 'パラベラム', recipe: { '鉄鉱石': 4, '栄華の炎': 3, 'リキッド・スチール': 1, 'light_1': 1 } },
+            'light_3': { name: 'ライトバレット3', type: 'パラベラム', recipe: { '鉄鉱石': 20, '栄華の炎': 20, 'リキッド・スチール': 20, 'light_2': 2 } },
+            'light_4': { name: 'ライトバレット4', type: 'パラベラム', recipe: { '鉄鉱石': 30, '栄華の炎': 30, 'リキッド・スチール': 25, 'light_3': 2 } },
+            'flame': { name: 'フレイムバレット', type: 'パラベラム', recipe: { 'iron_1': 5, '炎の宝珠': 10, 'ファイア・ジーン': 7, '栄華の炎': 5 } },
+            'poison': { name: 'ポイズンバレット', type: 'パラベラム', recipe: { 'iron_1': 5, '水の宝珠': 10, 'アクア・ジーン': 7, '栄華の炎': 5 } },
+            'sleep': { name: 'スリープバレット', type: 'パラベラム', recipe: { 'iron_1': 5, '風の宝珠': 10, 'ウィンド・ジーン': 7, '栄華の炎': 5 } },
+            'barrier': { name: 'バリアシード', type: 'パラベラム', recipe: { 'light_1': 3, 'ホーリー・ジーン': 20, '虚ろなる魄': 10, '栄華の炎': 10 } },
+            'charm': { name: 'チャームバレット', type: 'パラベラム', recipe: { 'iron_1': 5, '土の宝珠': 10, 'アース・ジーン': 7, '栄華の炎': 5 } },
+            'paralyze': { name: 'パラライズバレット', type: 'パラベラム', recipe: { 'iron_5': 1, 'light_4': 1, 'バハムートの紫電角': 2, '要塞の壁片': 5 } },
+            'heal': { name: 'ヒールバレット', type: 'パラベラム', recipe: { 'iron_5': 1, 'light_4': 1, '銀天の輝き': 2, '要塞の壁片': 5 } },
+            'braze': { name: 'ブレイズバレット', type: 'パラベラム', recipe: { 'iron_2': 1, '火のプシュケー': 10, '赤星の輝き': 30 } },
+            'toxic': { name: 'トキシックバレット', type: 'パラベラム', recipe: { 'iron_2': 1, '水のプシュケー': 10, '青星の輝き': 30 } },
+            'thunder': { name: 'サンダーバレット', type: 'パラベラム', recipe: { 'iron_2': 1, '光のプシュケー': 10, '白星の輝き': 30 } },
+            'fleeze': { name: 'フリーズバレット', type: 'パラベラム', recipe: { 'iron_2': 1, '水のプシュケー': 10, '青星の輝き': 30 } },
+
+            //ライフル
+            'fullMetal_1': { name: 'フルメタルジャケット1', type: 'ライフル', recipe: { '鉄鉱石': 3, '砂レンガ': 3, '真理の土': 7, '大地の宝珠': 2 } },
+            'fullMetal_2': { name: 'フルメタルジャケット2', type: 'ライフル', recipe: { 'fullMetal_1': 1, '鉄鉱石': 7, '真理の土': 10, '大地の宝珠': 5 } },
+            'fullMetal_3': { name: 'フルメタルジャケット3', type: 'ライフル', recipe: { 'fullMetal_2': 2, '鉄鉱石': 12, 'リキッド・スチール': 10, '原初の砂': 12 } },
+            'fullMetal_4': { name: 'フルメタルジャケット4', type: 'ライフル', recipe: { 'fullMetal_3': 5, '鉄鉱石': 25, 'リキッド・スチール': 20, '砂レンガ': 25 } },
+            'fullMetal_5': { name: 'フルメタルジャケット5', type: 'ライフル', recipe: { 'fullMetal_4': 5, '鉄鉱石': 30, 'リキッド・スチール': 25, '砂レンガ': 30 } },
+            'exploder_1': { name: 'エクスプローダー1', type: 'ライフル', recipe: { 'fullMetal_1': 3, '赤色火薬の原料': 4, '綺麗な砂': 7, '赤熱鉱': 4 } },
+            'exploder_2': { name: 'エクスプローダー2', type: 'ライフル', recipe: { 'exploder_1': 1, '赤色火薬の原料': 8, '綺麗な砂': 10, '赤熱鉱': 8 } },
+            'exploder_3': { name: 'エクスプローダー3', type: 'ライフル', recipe: { 'exploder_2': 2, '赤色火薬の原料': 8, '綺麗な砂': 15, '赤熱鉱': 15 } },
+            'armorPiercing_1': { name: 'アーマーピアシング1', type: 'ライフル', recipe: { 'fullMetal_2': 3, '鉄鉱石': 5, '真理の土': 5, '風切四つ葉': 10 } },
+            'armorPiercing_2': { name: 'アーマーピアシング2', type: 'ライフル', recipe: { 'armorPiercing_1': 1, '鉄鉱石': 8, '真理の土': 8, '風切四つ葉': 14 } },
+            'armorPiercing_3': { name: 'アーマーピアシング3', type: 'ライフル', recipe: { 'armorPiercing_2': 2, '鉄鉱石': 18, '真理の土': 24, '風切四つ葉': 20 } },
+            'silver_1': { name: 'シルバーバレット1', type: 'ライフル', recipe: { 'fullMetal_2': 3, '星晶の欠片': 8, 'アース・ジーン': 20, 'ラクリモサ': 5 } },
+            'silver_2': { name: 'シルバーバレット2', type: 'ライフル', recipe: { 'silver_1': 7, '星晶の欠片': 20, 'アース・ジーン': 30, 'ラクリモサ': 10 } },
+            'silver_3': { name: 'シルバーバレット3', type: 'ライフル', recipe: { 'silver_2': 10, '星晶の欠片': 30, 'アース・ジーン': 40, 'ラクリモサ': 20 } },
+            'gold_1': { name: 'ゴールドバレット1', type: 'ライフル', recipe: { 'silver_1': 10, 'fullMetal_5': 2, 'メテオライト': 1 } },
+            'gold_2': { name: 'ゴールドバレット2', type: 'ライフル', recipe: { 'gold_1': 2, '灰白砂岩': 5, 'メテオライト': 5, '錆びついた掛瓦': 5 } },
+            'endParadiseLost': { name: 'エンドモデル：パラダイス・ロスト', type: 'ライフル', recipe: { 'fullMetal_5': 3, '終末の暗晶': 150, 'ダマスカス骸晶': 10 } },
+            'endChaosRegion': { name: 'エンドモデル：ケイオス・レギオン', type: 'ライフル', recipe: { 'fullMetal_5': 3, '漆黒の棘翅': 150, 'ダマスカス骸晶': 10 } },
+            'endAnagennesis': { name: 'エンドモデル：アナゲンネーシス', type: 'ライフル', recipe: { 'fullMetal_5': 3, '狡知の魔角': 150, 'ダマスカス骸晶': 10 } },
+            'endGenesisNova': { name: 'エンドモデル：ジェネシスノヴァ', type: 'ライフル', recipe: { 'fullMetal_5': 3, 'アルテマメモリ': 150, 'ダマスカス骸晶': 10, 'ヒヒイロカネ': 1 } },
+            'endRatioExetium': { name: 'エンドモデル：ラツィオ・エグゼティウム', type: 'ライフル', recipe: { 'endAnagennesis': 3, '極理の結晶': 200, 'ヒヒイロカネ': 1, '刻の流砂': 3 } },
+            'endAntiBasileia': { name: 'エンドモデル：アンチ・バシレイア', type: 'ライフル', recipe: { 'endParadiseLost': 3, '終末を齎す黒羽': 200, 'ヒヒイロカネ': 1, '刻の流砂': 3 } },
+
+            //カートリッジ
+            'shell_1': { name: 'シェルバレット1', type: 'カードリッジ', recipe: { '栄華の炎': 4, '赤熱火薬の原料': 5, '赤熱鉱': 5 } },
+            'shell_2': { name: 'シェルバレット2', type: 'カードリッジ', recipe: { 'shell_1': 1, '栄華の炎': 7, '赤熱火薬の原料': 5, '赤熱鉱': 7 } },
+            'shell_3': { name: 'シェルバレット3', type: 'カードリッジ', recipe: { 'shell_2': 2, '栄華の炎': 10, '赤熱火薬の原料': 10, '赤熱鉱': 10 } },
+            'shell_4': { name: 'シェルバレット4', type: 'カードリッジ', recipe: { 'shell_3': 5, '栄華の炎': 20, '赤熱火薬の原料': 30, '赤熱鉱': 20 } },
+            'shell_5': { name: 'シェルバレット5', type: 'カードリッジ', recipe: { 'shell_4': 5, '栄華の炎': 30, '赤熱火薬の原料': 40, '赤熱鉱': 30 } },
+            'assaultShell_1': { name: 'アサルトシェル1', type: 'カードリッジ', recipe: { '栄華の炎': 7, '赤熱火薬の原料': 15, '赤熱鉱': 5 } },
+            'assaultShell_2': { name: 'アサルトシェル2', type: 'カードリッジ', recipe: { 'assaultShell_1': 1, '栄華の炎': 10, '赤熱火薬の原料': 20, '赤熱鉱': 16 } },
+            'heatCylinder_1': { name: 'ヒートシリンダー1', type: 'カードリッジ', recipe: { '古代布': 2, '赤熱火薬の原料': 5, 'ファイア・ジーン': 30 } },
+            'heatCylinder_2': { name: 'ヒートシリンダー2', type: 'カードリッジ', recipe: { 'heatCylinder_1': 1, '古代布': 5, '赤熱火薬の原料': 10, 'プロミネンスリアクター': 5 } },
+            'coldCylinder_1': { name: 'コールドシリンダー1', type: 'カードリッジ', recipe: { '古代布': 2, '赤熱火薬の原料': 5, 'アクア・ジーン': 30 } },
+            'coldCylinder_2': { name: 'コールドシリンダー2', type: 'カードリッジ', recipe: { 'coldCylinder_1': 1, '古代布': 5, '赤熱火薬の原料': 10, '海神の扇尾': 5 } },
+            'earthCylinder_1': { name: 'アースシリンダー1', type: 'カードリッジ', recipe: { '古代布': 2, '赤熱火薬の原料': 5, 'アース・ジーン': 30 } },
+            'earthCylinder_2': { name: 'アースシリンダー2', type: 'カードリッジ', recipe: { 'earthCylinder_1': 1, '古代布': 5, '赤熱火薬の原料': 10, '創樹の花蕾': 5 } },
+            'galeCylinder_1': { name: 'ゲイルシリンダー1', type: 'カードリッジ', recipe: { '古代布': 2, '赤熱火薬の原料': 5, 'ウィンド・ジーン': 30 } },
+            'galeCylinder_2': { name: 'ゲイルシリンダー2', type: 'カードリッジ', recipe: { 'galeCylinder_1': 1, '古代布': 5, '赤熱火薬の原料': 10, '嵐竜の琥珀眼': 5 } },
+            'thunderCylinder_1': { name: 'サンダーシリンダー1', type: 'カードリッジ', recipe: { '古代布': 2, '赤熱火薬の原料': 5, 'ホーリー・ジーン': 30 } },
+            'thunderCylinder_2': { name: 'サンダーシリンダー2', type: 'カードリッジ', recipe: { 'thunderCylinder_1': 1, '古代布': 5, '赤熱火薬の原料': 10, 'プライマルビット': 5 } },
+            'darkCylinder_1': { name: 'ダークシリンダー1', type: 'カードリッジ', recipe: { '古代布': 2, '赤熱火薬の原料': 5, 'ダーク・ジーン': 30 } },
+            'darkCylinder_2': { name: 'ダークシリンダー2', type: 'カードリッジ', recipe: { 'darkCylinder_1': 1, '古代布': 5, '赤熱火薬の原料': 10, '黒霧の結晶': 5 } },
+            'armorBreaker_1': { name: 'アーマーブレイカー1', type: 'カードリッジ', recipe: { 'リキッド・スチール': 10, '栄華の炎': 20, 'armorPiercing_2': 5, 'armorPiercing_1': 5 } },
+            'armorBreaker_2': { name: 'アーマーブレイカー2', type: 'カードリッジ', recipe: { 'armorBreaker_1': 1, 'リキッド・スチール': 24, '赤熱火薬の原料': 20 } },
+            'slugShot_1': { name: 'スラッグショット1', type: 'カードリッジ', recipe: { 'リキッド・スチール': 20, '栄華の炎': 20, 'fullMetal_3': 5, 'iron_3': 5 } },
+            'slugShot_2': { name: 'スラッグショット2', type: 'カードリッジ', recipe: { 'slugShot_1': 1, 'リキッド・スチール': 70, '赤熱火薬の原料': 20 } },
+            'stickyShell_1': { name: 'スティッキーシェル1', type: 'カードリッジ', recipe: { 'リキッド・スチール': 10, '錆びた薬莢': 8, 'armorPiercing_2': 5, 'armorPiercing_1': 5 } },
+            'stickyShell_2': { name: 'スティッキーシェル2', type: 'カードリッジ', recipe: { 'stickyShell_1': 10, 'リキッド・スチール': 20, '錆びた薬莢': 15 } },
+            'chaseShell': { name: 'チェイスシェル', type: 'カードリッジ', recipe: { '割れたティーカップ': 10, '天然翡翠': 10, 'マリス・フラグメント': 5, 'shell_5': 2 } },
+            'enhanceShell': { name: 'エンハンスシェル', type: 'カードリッジ', recipe: { '巨獣骨': 10, '透き通るような絹': 10, 'マリス・フラグメント': 5, 'shell_5': 2 } },
+            'catastropheCylinder': { name: 'カタストロフィシリンダー', type: 'カードリッジ', recipe: { 'shell_5': 1, 'バハムートの紫電角': 300 } },
+            'akashicCylinder': { name: 'アカシックシリンダー', type: 'カードリッジ', recipe: { 'shell_5': 1, '虚ろなる鍵': 300 } },
+            'CosmosCylinder': { name: 'コスモスシリンダー', type: 'カードリッジ', recipe: { 'shell_5': 1, '蒼翠の結晶': 300 } },
+            'endApocalypse': { name: 'エンドモデル：アポカリプス', type: 'カードリッジ', recipe: { 'catastropheCylinder': 1, 'akashicCylinder': 1, 'CosmosCylinder': 1, '終末を齎す黒羽': 100 } },
+
+            //エーテリアル
+            'ifritPoint_1': { name: 'イフリートポイント1', type: 'エーテリアル', recipe: { '炎の宝珠': 20, '紅蓮の宝珠': 10, 'ファイア・ジーン': 20, 'イフリートのアニマ': 20 } },
+            'ifritPoint_2': { name: 'イフリートポイント2', type: 'エーテリアル', recipe: { '赤の書': 24, '業火の巻': 12, '赤龍鱗': 16, 'ifritPoint_1': 2 } },
+            'ifritPoint_3': { name: 'イフリートポイント3', type: 'エーテリアル', recipe: { '真なる火のアニマ': 20, '火晶のエレメント': 10, '赤龍鱗': 20, 'ifritPoint_2': 5 } },
+            'cocytusPoint_1': { name: 'コキュートスポイント1', type: 'エーテリアル', recipe: { '水の宝珠': 20, '霧氷の宝珠': 10, 'アクア・ジーン': 20, 'コキュートスのアニマ': 20 } },
+            'cocytusPoint_2': { name: 'コキュートスポイント2', type: 'エーテリアル', recipe: { '青の書': 24, '深淵の巻': 12, '青龍鱗': 16, 'cocytusPoint_1': 2 } },
+            'cocytusPoint_3': { name: 'コキュートスポイント3', type: 'エーテリアル', recipe: { '真なる水のアニマ': 20, '水晶のエレメント': 10, '青龍鱗': 20, 'cocytusPoint_2': 5 } },
+            'vohumanahPoint_1': { name: 'ウォフマナフポイント1', type: 'エーテリアル', recipe: { '土の宝珠': 20, '大地の宝珠': 10, 'アース・ジーン': 20, 'ウォフマナフのアニマ': 20 } },
+            'vohumanahPoint_2': { name: 'ウォフマナフポイント2', type: 'エーテリアル', recipe: { '橙の書': 24, '大地の巻': 12, '地龍鱗': 16, 'vohumanahPoint_1': 2 } },
+            'vohumanahPoint_3': { name: 'ウォフマナフポイント3', type: 'エーテリアル', recipe: { '真なる土のアニマ': 20, '土晶のエレメント': 10, '地龍鱗': 20, 'vohumanahPoint_2': 5 } },
+            'sagittariusPoint_1': { name: 'サジタリウスポイント1', type: 'エーテリアル', recipe: { '風の宝珠': 20, '烈空の宝珠': 10, 'ウィンド・ジーン': 20, 'サジタリウスのアニマ': 20 } },
+            'sagittariusPoint_2': { name: 'サジタリウスポイント2', type: 'エーテリアル', recipe: { '緑の書': 24, '烈空の巻': 12, '風龍鱗': 16, 'sagittariusPoint_1': 2 } },
+            'sagittariusPoint_3': { name: 'サジタリウスポイント3', type: 'エーテリアル', recipe: { '真なる風のアニマ': 20, '風晶のエレメント': 10, '風龍鱗': 20, 'sagittariusPoint_2': 5 } },
+            'corowPoint_1': { name: 'コロゥポイント1', type: 'エーテリアル', recipe: { '光の宝珠': 20, '煌光の宝珠': 10, 'ホーリー・ジーン': 20, 'コロゥのアニマ': 20 } },
+            'corowPoint_2': { name: 'コロゥポイント2', type: 'エーテリアル', recipe: { '白の書': 24, '煌光の巻': 12, '白龍鱗': 16, 'corowPoint_1': 2 } },
+            'corowPoint_3': { name: 'コロゥポイント3', type: 'エーテリアル', recipe: { '真なる光のアニマ': 20, '光晶のエレメント': 10, '白龍鱗': 20, 'corowPoint_2': 5 } },
+            'diabloPoint_1': { name: 'ディアボロスポイント1', type: 'エーテリアル', recipe: { '闇の宝珠': 20, '奈落の宝珠': 10, 'ダーク・ジーン': 20, 'ディアボロスのアニマ': 20 } },
+            'diabloPoint_2': { name: 'ディアボロスポイント2', type: 'エーテリアル', recipe: { '黒の書': 24, '深淵の巻': 12, '黒龍鱗': 16, 'diabloPoint_1': 2 } },
+            'diabloPoint_3': { name: 'ディアボロスポイント3', type: 'エーテリアル', recipe: { '真なる闇のアニマ': 20, '闇晶のエレメント': 10, '黒龍鱗': 20, 'diabloPoint_2': 5 } },
+            'agniPoint_1': { name: 'アグニスポイント1', type: 'エーテリアル', recipe: { 'ifritPoint_2': 3, '灼熱の書': 5, 'オルディネシュタイン': 7 } },
+            'agniPoint_2': { name: 'アグニスポイント2', type: 'エーテリアル', recipe: { 'agniPoint_1': 1, '灼熱の書': 7, '火晶のエレメント': 30, '光晶のエレメント': 20 } },
+            'agniPoint_3': { name: 'アグニスポイント3', type: 'エーテリアル', recipe: { 'agniPoint_2': 5, '赤星の輝き': 7, '火晶のエレメント': 20, '火のプシュケー': 3 } },
+            'agniPoint_4': { name: 'アグニスポイント4', type: 'エーテリアル', recipe: { 'agniPoint_3': 1, 'ウィルナスの竜珠': 100, 'イグナイトラブル': 50, '真竜の金鱗': 30 } },
+            'neptunePoint_1': { name: 'ネプチューンポイント1', type: 'エーテリアル', recipe: { 'cocytusPoint_2': 3, '水分の書': 5, 'オルディネシュタイン': 7 } },
+            'neptunePoint_2': { name: 'ネプチューンポイント2', type: 'エーテリアル', recipe: { 'neptunePoint_1': 1, '水分の書': 7, '水晶のエレメント': 30, '闇晶のエレメント': 20 } },
+            'neptunePoint_3': { name: 'ネプチューンポイント3', type: 'エーテリアル', recipe: { 'neptunePoint_2': 5, '青星の輝き': 7, '水晶のエレメント': 20, '水のプシュケー': 3 } },
+            'neptunePoint_4': { name: 'ネプチューンポイント4', type: 'エーテリアル', recipe: { 'neptunePoint_3': 1, 'ワムデュスの竜珠': 100, 'アビサル・トラジェディー': 50, '真竜の金鱗': 30 } },
+            'titanPoint_1': { name: 'ティターンポイント1', type: 'エーテリアル', recipe: { 'vohumanahPoint_2': 3, '巨人の書': 5, 'オルディネシュタイン': 7 } },
+            'titanPoint_2': { name: 'ティターンポイント2', type: 'エーテリアル', recipe: { 'titanPoint_1': 1, '巨人の書': 7, '土晶のエレメント': 30, '闇晶のエレメント': 20 } },
+            'titanPoint_3': { name: 'ティターンポイント3', type: 'エーテリアル', recipe: { 'titanPoint_2': 5, '黄星の輝き': 7, '土晶のエレメント': 20, '土のプシュケー': 3 } },
+            'titanPoint_4': { name: 'ティターンポイント4', type: 'エーテリアル', recipe: { 'titanPoint_3': 1, 'ガレヲンの竜珠': 100, 'インシュラーコア': 50, '真竜の金鱗': 30 } },
+            'zephyrusPoint_1': { name: 'ゼピュロスポイント1', type: 'エーテリアル', recipe: { 'sagittariusPoint_2': 3, '風凪の書': 5, 'オルディネシュタイン': 7 } },
+            'zephyrusPoint_2': { name: 'ゼピュロスポイント2', type: 'エーテリアル', recipe: { 'zephyrusPoint_1': 1, '風凪の書': 7, '風晶のエレメント': 30, '光晶のエレメント': 20 } },
+            'zephyrusPoint_3': { name: 'ゼピュロスポイント3', type: 'エーテリアル', recipe: { 'zephyrusPoint_2': 5, '緑星の輝き': 7, '風晶のエレメント': 20, '風のプシュケー': 3 } },
+            'zephyrusPoint_4': { name: 'ゼピュロスポイント4', type: 'エーテリアル', recipe: { 'zephyrusPoint_3': 1, 'イーウィヤの竜珠': 100, 'ゲイルロック': 50, '真竜の金鱗': 30 } },
+            'zeusPoint_1': { name: 'ゼウスポイント1', type: 'エーテリアル', recipe: { 'corowPoint_2': 3, '灼熱の書': 5, '風凪の書': 5, 'オルディネシュタイン': 7 } },
+            'zeusPoint_2': { name: 'ゼウスポイント2', type: 'エーテリアル', recipe: { 'zeusPoint_1': 1, '灼熱の書': 7, '風凪の書': 7, '光晶のエレメント': 20 } },
+            'zeusPoint_3': { name: 'ゼウスポイント3', type: 'エーテリアル', recipe: { 'zeusPoint_2': 5, '白星の輝き': 7, '光晶のエレメント': 20, '光のプシュケー': 3 } },
+            'zeusPoint_4': { name: 'ゼウスポイント4', type: 'エーテリアル', recipe: { 'zeusPoint_3': 1, 'ルオーの竜珠': 100, '靂輪': 50, '真竜の金鱗': 30 } },
+            'hadesPoint_1': { name: 'ハデスポイント1', type: 'エーテリアル', recipe: { 'diabloPoint_2': 3, '水分の書': 5, '巨人の書': 5, 'オルディネシュタイン': 7 } },
+            'hadesPoint_2': { name: 'ハデスポイント2', type: 'エーテリアル', recipe: { 'hadesPoint_1': 1, '水分の書': 7, '巨人の書': 7, '闇晶のエレメント': 20 } },
+            'hadesPoint_3': { name: 'ハデスポイント3', type: 'エーテリアル', recipe: { 'hadesPoint_2': 5, '黒星の輝き': 7, '闇晶のエレメント': 20, '闇のプシュケー': 3 } },
+            'hadesPoint_4': { name: 'ハデスポイント4', type: 'エーテリアル', recipe: { 'hadesPoint_3': 1, 'フェディエルの竜珠': 100, 'トーデストリープ': 50, '真竜の金鱗': 30 } },
+            'endHexachromatic': { name: 'エンドモデル：ヘキサクロマティック', type: 'エーテリアル', recipe: { '極理の結晶': 100, '真竜の金鱗': 200, 'ダマスカス骸晶': 10, '刻の流砂': 1 } }
+        };
+
+        // ユーザーの入力値を保持
+        const userInputs = {}; // { id: { target: 0, stock: 0 } }
+
+        function renderList() {
+            const filter = document.getElementById('type-filter').value;
+            const container = document.getElementById('bullet-list');
+            container.innerHTML = '';
+
+            for (const id in bulletMaster) {
+                const item = bulletMaster[id];
+                if (filter !== 'all' && item.type !== filter) continue;
+
+                const row = document.createElement('div');
+                row.className = 'bullet-item';
+                row.innerHTML = `
+            <div>
+                <span class="bullet-name">${item.name}</span>
+                <span class="bullet-type">${item.type}</span>
+            </div>
+            <input type="number" min="0" placeholder="0" value="${userInputs[id]?.target || ''}" oninput="updateVal('${id}', 'target', this.value)">
+            <input type="number" min="0" placeholder="0" value="${userInputs[id]?.stock || ''}" oninput="updateVal('${id}', 'stock', this.value)">
+        `;
+                container.appendChild(row);
+            }
+        }
+
+        function updateVal(id, field, val) {
+            if (!userInputs[id]) userInputs[id] = { target: 0, stock: 0 };
+            userInputs[id][field] = parseInt(val) || 0;
+            calculate();
+        }
+
+        function calculate() {
+            const targets = {}; 
+            const stock = {};   
+            const finalShortage = {}; 
+
+            // 1. ユーザーの入力を整理
+            for (const id in bulletMaster) {
+                const input = userInputs[id];
+                if (!input) continue;
+                
+                // 目標数をセット
+                if (input.target > 0) targets[id] = input.target;
+                
+                // 【重要】所持バレットも「名前」ではなく「ID」で在庫管理する
+                // これにより consume 関数内で id が一致した時に在庫から引けるようになる
+                if (input.stock > 0) stock[id] = input.stock;
+            }
+
+            // 2. 消費・分解を行う再帰関数
+            function consume(id, requiredQty) {
+                // 在庫（作成済みのバレット、または生素材）があるか確認
+                const available = stock[id] || 0;
+                const usedFromStock = Math.min(available, requiredQty);
+                
+                // 在庫を減らす
+                stock[id] = available - usedFromStock;
+                let remainingToNeed = requiredQty - usedFromStock;
+
+                // 在庫で足りない場合
+                if (remainingToNeed > 0) {
+                    const item = bulletMaster[id];
+                    if (item) {
+                        // A: レシピがある（バレットである）ならさらに分解
+                        for (const matId in item.recipe) {
+                            const needPerUnit = item.recipe[matId];
+                            consume(matId, needPerUnit * remainingToNeed);
+                        }
+                    } else {
+                        // B: レシピがない（生素材である）なら不足分として集計
+                        // IDが日本語名（生素材）の場合はそのまま表示名に、IDの場合はマスターから名前を引く
+                        const displayName = bulletMaster[id] ? bulletMaster[id].name : id;
+                        finalShortage[displayName] = (finalShortage[displayName] || 0) + remainingToNeed;
+                    }
+                }
+            }
+
+            // 3. すべての目標バレットに対して実行
+            for (const id in targets) {
+                consume(id, targets[id]);
+            }
+
+            displayShortage(finalShortage);
+        }
+
+        function displayShortage(shortage) {
+            const container = document.getElementById('total-shortage');
+            const keys = Object.keys(shortage);
+
+            if (keys.length === 0) {
+                container.innerHTML = '<p class="no-need">不足している素材はありません。<br>目標数と所持数を入力してください。</p>';
+                return;
+            }
+
+            let html = '';
+            keys.sort().forEach(mat => {
+                html += `
+            <div class="mat-row">
+                <span class="mat-name">${mat}</span>
+                <span class="mat-needed">${shortage[mat].toLocaleString()} <small>個</small></span>
+            </div>
+        `;
+            });
+            container.innerHTML = html;
+        }
+
+        // 初期表示
+        renderList();
+    </script>
+<!-- ページ最下部 -->
+    <footer style="text-align: center; margin-top: 40px; padding-bottom: 20px; font-size: 0.8rem; color: #7f8c8d;">
+        <p>© 2026 バレット在庫計算機 | Created by <strong>Kaede</strong></p>
+    </footer>
+</body>
+
+</html>
